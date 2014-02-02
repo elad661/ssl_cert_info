@@ -13,4 +13,3 @@ Without pyOpenSSL, data for self-signed certificates won't be available
 Without python3 or python-backports-ssl_match_hostname, no CN validation will be preformed
 Without python3, some data might be missing our incomplete
 
-Some information might be missing when using Python 2.7
