@@ -1,0 +1,195 @@
+#!/bin/python3
+# coding=utf8
+#
+# ssl_cert_info - Get basic information about a server's SSL/TLS certificate
+#
+#╔════════════════════════════════════════════════════════════════════════════╗
+#║ Copyright © 2014, Elad Alfassa <elad@fedoraproject.org>                    ║
+#║                                                                            ║
+#║   This program is free software: you can redistribute it and/or modify     ║
+#║   it under the terms of the GNU General Public License as published by     ║
+#║   the Free Software Foundation, either version 3 of the License, or        ║
+#║   (at your option) any later version.                                      ║
+#║                                                                            ║
+#║   This program is distributed in the hope that it will be useful,          ║
+#║   but WITHOUT ANY WARRANTY; without even the implied warranty of           ║
+#║   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the            ║
+#║   GNU General Public License for more details.                             ║
+#║                                                                            ║
+#║   You should have received a copy of the GNU General Public License        ║
+#║   along with this program.  If not, see <http://www.gnu.org/licenses/>.    ║
+#║                                                                            ║
+#╚════════════════════════════════════════════════════════════════════════════╝
+from __future__ import print_function
+import sys
+import socket
+import ssl
+if sys.version_info.major < 3 and not hasattr(ssl, 'match_hostname'):
+    try:
+        # Attempt to import ssl_match_hostname from python-backports
+        import backports.ssl_match_hostname
+        ssl.match_hostname = backports.ssl_match_hostname.match_hostname
+        ssl.CertificateError = backports.ssl_match_hostname.CertificateError
+    except ImportError:
+        pass
+try:
+    import OpenSSL
+    has_openssl = True
+except ImportError:
+    has_openssl = False
+    print('\033[1;33mWARNING:\033[0m Can\'t find pyOpenSSL. This means you won\'t be able to show info for self-signed certs')
+import datetime
+import argparse
+
+def getcert(host, port):
+    ''' Get certificate info using Python's built in ssl module '''
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((host, port))
+    
+    sock = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_REQUIRED, ca_certs='/etc/pki/tls/certs/ca-bundle.crt')
+    
+    cert = sock.getpeercert()
+    cert['cipher'] = sock.cipher()
+
+    sock.close()
+    return cert
+
+def get_pem_cert_and_cipher(host,port):
+    ''' Return a tuple, first item is a PEM encoded certificate, second is the SSL cipher used '''
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((host, port))
+    
+    sock = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_NONE)
+    
+    cert = ssl.DER_cert_to_PEM_cert(sock.getpeercert(True))
+    cipher = sock.cipher()
+
+    sock.close()
+    return (cert, cipher)
+
+def strdict(list_of_tuples):
+    ''' Makes a dict with keys and values of type str for a list of tuples of type bytes
+    
+        Useful for Python 3 where using bytes as dict keys causes problems.
+    '''
+    return {key.decode():value.decode() for key,value in list_of_tuples}
+
+def getcert_selfsigned(host, port):
+    ''' Get cert info using pyOpenSSL, for when cert is self signed '''
+    pem_cert, cipher = get_pem_cert_and_cipher(host, port)
+    cert = {'subject': {}, 'issuer': {}, 'cipher': cipher}
+    x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, pem_cert)
+
+    # Now for the ugly part of getting OpenSSL's cert info to an acceptable format
+    cert['notAfter'] = datetime.datetime.strptime(x509.get_notAfter().decode(), '%Y%m%d%H%M%SZ').strftime('%b %d %H:%M:%S %Y GMT')
+    cert['notBefore'] = datetime.datetime.strptime(x509.get_notBefore().decode(), '%Y%m%d%H%M%SZ').strftime('%b %d %H:%M:%S %Y GMT')
+
+    openssl_formatted_subject = strdict(x509.get_subject().get_components())
+    cert['subject']['commonName'] = openssl_formatted_subject['CN']
+    if 'emailAddress' in openssl_formatted_subject:
+        cert['subject']['emailAddress'] = openssl_formatted_subject['emailAddress']
+    if 'C' in openssl_formatted_subject:
+        cert['subject']['countryName'] = openssl_formatted_subject['C']
+
+    openssl_formatted_issuer = strdict(x509.get_issuer().get_components())
+    if 'C' in openssl_formatted_issuer:
+        cert['issuer']['countryName'] = openssl_formatted_issuer['C']
+    if 'O' in openssl_formatted_issuer:
+        cert['issuer']['organizationName'] = openssl_formatted_issuer['O']
+    if 'CN' in openssl_formatted_issuer:
+        cert['issuer']['commonName'] = openssl_formatted_issuer['CN']
+    if 'OU' in openssl_formatted_issuer:
+        cert['issuer']['organizationalUnitName'] = openssl_formatted_issuer['OU']
+
+    return cert
+
+def parse_cert_dict(cert):
+    parsed_cert = {'subject': {}, 'issuer': {}}
+    for pair in cert['subject']:
+        parsed_cert['subject'][pair[0][0]] = pair[0][1]
+    if 'issuer' in cert:
+        for pair in cert['issuer']:
+            parsed_cert['issuer'][pair[0][0]] = pair[0][1]
+    return parsed_cert
+
+def main():
+    if sys.version_info.major < 3:
+        print('\033[1;33mWARNING:\033[0m Running on older Python, some data might be incomplete. Please use Python 3 if you can.')
+    parser = argparse.ArgumentParser(description='Process some integers.')
+    parser.add_argument('host', metavar='host', type=str,
+                   help='host to test')
+    parser.add_argument('port', metavar='port', nargs='?', type=int, default=443,
+                   help='port')
+    args = parser.parse_args()
+    host = args.host
+    port = args.port
+
+    print('Connecting to %s:%s' % (host, port))
+    try:
+        cert = getcert(host, port)
+        parsed = parse_cert_dict(cert)
+        self_signed = False
+    except ssl.SSLError:
+        if has_openssl:
+            cert = getcert_selfsigned(host, port)
+            parsed = cert
+            self_signed = True
+            print('\033[1;33mWARNING:\033[0m self-signed certificate')
+        else:
+            print('\033[1;31mERROR:\033[0m self-signed certificate, no pyOpenSSL, unable to show data')
+            return 1
+    print()
+    print('Protocol: %s' % cert['cipher'][1])
+    print('Cipher:   %s' % str(cert['cipher'][0]))
+    print('Grade:    %sbit' % str(cert['cipher'][2]))
+    print()
+
+    print('---Dates---')
+    print('Expires:   %s' % cert['notAfter'])
+    expirey = datetime.datetime.fromtimestamp(ssl.cert_time_to_seconds(cert['notAfter']))
+    now = datetime.datetime.now()
+    if now > expirey:
+        print('\t\033[1;33mWARNING:\033[0m Expired Certifcate')
+    if 'notBefore' in cert:
+        print('Issued At: %s' % cert['notBefore'])
+        issued = datetime.datetime.fromtimestamp(ssl.cert_time_to_seconds(cert['notBefore']))
+        now = datetime.datetime.now()
+        if issued > now:
+            print('\t\033[1;33mWARNING:\033[0m Time travel detected')
+    print()
+    print('---Subject---')
+    
+    print('CN: %s' % parsed['subject']['commonName'])
+    if hasattr(ssl, 'match_hostname') and not self_signed:
+        try:
+            ssl.match_hostname(cert, host)
+        except ssl.CertificateError:
+            print('\t\033[1;33mWARNING:\033[0m Invalid CN')
+
+    if 'organizationName' in parsed['subject']:
+        print('Organization: %s' % parsed['subject']['organizationName'])
+    if 'localityName' in parsed['subject']:
+        print('Locality: %s' % parsed['subject']['localityName'])
+    if 'stateOrProvinceName' in parsed['subject']:
+        print('State/Province: %s' % parsed['subject']['stateOrProvinceName'])
+    if 'countryName' in parsed['subject']:
+        print('Country: %s' % parsed['subject']['countryName'])
+    if 'emailAddress' in parsed['subject']:
+        print('Email: %s' % parsed['subject']['emailAddress'])
+    print()
+    if 'issuer' in cert:
+        if not self_signed:
+            print('---Issuer---')
+        else:
+            print('---Issuer \033[1;33m[NOT VALIDATED]\033[0m---')
+        
+        print('Issuer: %s' % parsed['issuer']['organizationName'])
+        print('Issuer CN: %s' % parsed['issuer']['commonName'])
+        if 'organizationalUnitName' in parsed['issuer']:
+            print('Issuer OU: %s' % parsed['issuer']['organizationalUnitName'])
+        if 'countryName' in parsed['issuer']:
+            print('Issuer Country: %s' % parsed['issuer']['countryName'])
+    
+
+if __name__ == '__main__':
+    main()
