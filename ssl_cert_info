@@ -24,7 +24,7 @@ from __future__ import print_function
 import sys
 import socket
 import ssl
-if sys.version_info.major < 3 and not hasattr(ssl, 'match_hostname'):
+if not hasattr(ssl, 'match_hostname'):
     try:
         # Attempt to import ssl_match_hostname from python-backports
         import backports.ssl_match_hostname
