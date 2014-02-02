@@ -115,11 +115,11 @@ def parse_cert_dict(cert):
 def main():
     if sys.version_info.major < 3:
         print('\033[1;33mWARNING:\033[0m Running on older Python, some data might be incomplete. Please use Python 3 if you can.')
-    parser = argparse.ArgumentParser(description='Process some integers.')
+    parser = argparse.ArgumentParser(description='Get basic information about a server\'s SSL/TLS certificate')
     parser.add_argument('host', metavar='host', type=str,
-                   help='host to test')
+                   help='host to connectect to')
     parser.add_argument('port', metavar='port', nargs='?', type=int, default=443,
-                   help='port')
+                   help='port to use for the connection')
     args = parser.parse_args()
     host = args.host
     port = args.port
