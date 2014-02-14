@@ -74,13 +74,9 @@ def strdict(list_of_tuples):
     '''
     return {key.decode():value.decode() for key,value in list_of_tuples}
 
-def getcert_selfsigned(host, port):
-    ''' Get cert info using pyOpenSSL, for when cert is self signed '''
-    pem_cert, cipher = get_pem_cert_and_cipher(host, port)
-    cert = {'subject': {}, 'issuer': {}, 'cipher': cipher}
-    x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, pem_cert)
-
-    # Now for the ugly part of getting OpenSSL's cert info to an acceptable format
+def format_openssl_cert(x509):
+    ''' Format an OpenSSL cert object in an acceptable format '''
+    cert = {'subject': {}, 'issuer': {}}
     cert['notAfter'] = datetime.datetime.strptime(x509.get_notAfter().decode(), '%Y%m%d%H%M%SZ').strftime('%b %d %H:%M:%S %Y GMT')
     cert['notBefore'] = datetime.datetime.strptime(x509.get_notBefore().decode(), '%Y%m%d%H%M%SZ').strftime('%b %d %H:%M:%S %Y GMT')
 
@@ -100,6 +96,15 @@ def getcert_selfsigned(host, port):
         cert['issuer']['commonName'] = openssl_formatted_issuer['CN']
     if 'OU' in openssl_formatted_issuer:
         cert['issuer']['organizationalUnitName'] = openssl_formatted_issuer['OU']
+    return cert
+
+
+def getcert_selfsigned(host, port):
+    ''' Get cert info using pyOpenSSL, for when cert is self signed '''
+    pem_cert, cipher = get_pem_cert_and_cipher(host, port)
+    x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, pem_cert)
+    cert = format_openssl_cert(x509)
+    cert['cipher'] = chiper
 
     return cert
 
@@ -138,11 +143,12 @@ def main():
         else:
             print('\033[1;31mERROR:\033[0m self-signed certificate, no pyOpenSSL, unable to show data')
             return 1
-    print()
-    print('Protocol: %s' % cert['cipher'][1])
-    print('Cipher:   %s' % str(cert['cipher'][0]))
-    print('Grade:    %sbit' % str(cert['cipher'][2]))
-    print()
+    if 'cipher' in cert:
+        print()
+        print('Protocol: %s' % cert['cipher'][1])
+        print('Cipher:   %s' % str(cert['cipher'][0]))
+        print('Grade:    %sbit' % str(cert['cipher'][2]))
+        print()
 
     print('---Dates---')
     print('Expires:   %s' % cert['notAfter'])
@@ -182,9 +188,10 @@ def main():
             print('---Issuer---')
         else:
             print('---Issuer \033[1;33m[NOT VALIDATED]\033[0m---')
-        
-        print('Issuer: %s' % parsed['issuer']['organizationName'])
-        print('Issuer CN: %s' % parsed['issuer']['commonName'])
+        if 'organizationName' in parsed['issuer']:
+            print('Issuer: %s' % parsed['issuer']['organizationName'])
+        if 'commonName' in parsed['issuer']:
+            print('Issuer CN: %s' % parsed['issuer']['commonName'])
         if 'organizationalUnitName' in parsed['issuer']:
             print('Issuer OU: %s' % parsed['issuer']['organizationalUnitName'])
         if 'countryName' in parsed['issuer']:
